@@ -1,0 +1,78 @@
+import cv2
+import numpy as np
+import random
+import os
+
+IMAGE_PATH = r"C:\Users\admin\Documents\images (2).jpg"
+
+if not os.path.exists(IMAGE_PATH):
+    raise FileNotFoundError(f"Could not find the image at: {IMAGE_PATH}. Please check the path.")
+
+img = cv2.imread(IMAGE_PATH, cv2.IMREAD_GRAYSCALE)
+pixel_counts, bin_edges = np.histogram(img, bins=256, range=(0, 256))
+total_pixels = img.size
+
+def otsu_fitness(threshold):
+    """Calculates between-class variance. Higher variance = better threshold."""
+    threshold = int(threshold)
+    
+    w0 = np.sum(pixel_counts[:threshold]) / total_pixels
+    if w0 == 0: return 0
+    u0 = np.sum(np.arange(threshold) * pixel_counts[:threshold]) / (w0 * total_pixels)
+    
+    w1 = np.sum(pixel_counts[threshold:]) / total_pixels
+    if w1 == 0: return 0
+    u1 = np.sum(np.arange(threshold, 256) * pixel_counts[threshold:]) / (w1 * total_pixels)
+    
+    variance = w0 * w1 * ((u0 - u1) ** 2)
+    return variance
+
+POP_SIZE = 20
+CHROMOSOME_LEN = 8 
+MUTATION_RATE = 0.05
+CROSSOVER_RATE = 0.8
+GENERATIONS = 40
+
+def decode_chromosome(binary_array):
+    binary_str = "".join(str(bit) for bit in binary_array)
+    return int(binary_str, 2)
+
+population = [np.random.randint(0, 2, CHROMOSOME_LEN).tolist() for _ in range(POP_SIZE)]
+
+for generation in range(GENERATIONS):
+    fitness_scores = np.array([otsu_fitness(decode_chromosome(ind)) for ind in population])
+    
+    best_idx = np.argmax(fitness_scores)
+    best_threshold = decode_chromosome(population[best_idx])
+    
+    prob = (fitness_scores + 1e-6) / np.sum(fitness_scores + 1e-6)
+    selected_indices = np.random.choice(len(population), size=POP_SIZE, p=prob)
+    selected_pop = [population[i] for i in selected_indices]
+    
+    next_gen = []
+    for i in range(0, POP_SIZE, 2):
+        p1, p2 = selected_pop[i], selected_pop[(i+1) % POP_SIZE]
+        
+        if random.random() < CROSSOVER_RATE:
+            pt = random.randint(1, CHROMOSOME_LEN - 1)
+            c1, c2 = p1[:pt] + p2[pt:], p2[:pt] + p1[pt:]
+        else:
+            c1, c2 = p1.copy(), p2.copy()
+            
+        for c in [c1, c2]:
+            for b in range(CHROMOSOME_LEN):
+                if random.random() < MUTATION_RATE:
+                    c[b] = 1 - c[b]
+            next_gen.append(c)
+            
+    population = next_gen
+
+print("--- GA Threshold Optimization Results ---")
+print(f"Optimal Threshold Value found: {best_threshold}")
+print(f"Maximized Between-Class Variance: {otsu_fitness(best_threshold):.4f}")
+
+_, thresholded_img = cv2.threshold(img, best_threshold, 255, cv2.THRESH_BINARY)
+
+output_path = r"C:\Users\admin\Documents\threshold_result.jpg"
+cv2.imwrite(output_path, thresholded_img)
+print(f"Segmented image successfully saved to: {output_path}")
