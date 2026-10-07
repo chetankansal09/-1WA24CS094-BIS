@@ -1,0 +1,170 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+# ----------------------------------------------------
+# 1. Problem Configuration & Data Setup
+# ----------------------------------------------------
+np.random.seed(42)  # For reproducible coordinates and demands
+
+NUM_CUSTOMERS = 15
+VEHICLE_CAPACITY = 35
+DEPOT_COORD = np.array([50, 50])
+
+# Generate random customer coordinates (0 to 100) and demands (5 to 15)
+customer_coords = np.random.uniform(10, 90, size=(NUM_CUSTOMERS, 2))
+customer_demands = np.random.randint(5, 15, size=NUM_CUSTOMERS)
+
+# Full coordinate array including depot at index 0
+all_coords = np.vstack([DEPOT_COORD, customer_coords])
+
+# Precompute distance matrix
+num_nodes = NUM_CUSTOMERS + 1
+dist_matrix = np.zeros((num_nodes, num_nodes))
+for i in range(num_nodes):
+    for j in range(num_nodes):
+        dist_matrix[i, j] = np.linalg.norm(all_coords[i] - all_coords[j])
+
+# ----------------------------------------------------
+# 2. Helper Functions (Decoding & Fitness Evaluation)
+# ----------------------------------------------------
+def decode_position_to_routes(position):
+    """
+    Decodes continuous particle positions into discrete vehicle routes
+    using the Random Key encoding strategy.
+    """
+    # Sort customer indices (1 to NUM_CUSTOMERS) based on their continuous values
+    customer_indices = np.arange(1, NUM_CUSTOMERS + 1)
+    sorted_customers = customer_indices[np.argsort(position)]
+    
+    routes = []
+    current_route = []
+    current_load = 0
+    
+    for customer in sorted_customers:
+        demand = customer_demands[customer - 1]
+        if current_load + demand <= VEHICLE_CAPACITY:
+            current_route.append(customer)
+            current_load += demand
+        else:
+            if current_route:
+                routes.append(current_route)
+            current_route = [customer]
+            current_load = demand
+            
+    if current_route:
+        routes.append(current_route)
+        
+    return routes
+
+def evaluate_fitness(position):
+    """
+    Calculates the total distance traveled by all routes.
+    """
+    routes = decode_position_to_routes(position)
+    total_distance = 0
+    
+    for route in routes:
+        if not route:
+            continue
+        # Distance from depot (0) to first customer
+        total_distance += dist_matrix[0, route[0]]
+        # Distance between consecutive customers
+        for i in range(len(route) - 1):
+            total_distance += dist_matrix[route[i], route[i+1]]
+        # Distance from last customer back to depot (0)
+        total_distance += dist_matrix[route[-1], 0]
+        
+    return total_distance
+
+# ----------------------------------------------------
+# 3. Particle Swarm Optimization (PSO) Algorithm
+# ----------------------------------------------------
+NUM_PARTICLES = 30
+MAX_ITERATIONS = 100
+
+# PSO Hyperparameters
+W = 0.7   # Inertia weight
+C1 = 1.5  # Cognitive coefficient (personal best attraction)
+C2 = 1.5  # Social coefficient (global best attraction)
+
+# Initialize particles
+# Positions correspond only to the customers (dimension = NUM_CUSTOMERS)
+particle_position = np.random.uniform(-1, 1, size=(NUM_PARTICLES, NUM_CUSTOMERS))
+particle_velocity = np.random.uniform(-0.1, 0.1, size=(NUM_PARTICLES, NUM_CUSTOMERS))
+
+# Initialize personal bests
+p_best_position = np.copy(particle_position)
+p_best_fitness = np.array([evaluate_fitness(p) for p in particle_position])
+
+# Initialize global best
+g_best_index = np.argmin(p_best_fitness)
+g_best_position = np.copy(p_best_position[g_best_index])
+g_best_fitness = p_best_fitness[g_best_index]
+
+# Track optimization progress over iterations
+history = [g_best_fitness]
+
+# Main PSO Loop
+for iteration in range(MAX_ITERATIONS):
+    for i in range(NUM_PARTICLES):
+        # Generate random scaling arrays
+        r1 = np.random.uniform(0, 1, size=NUM_CUSTOMERS)
+        r2 = np.random.uniform(0, 1, size=NUM_CUSTOMERS)
+        
+        # Update Velocity
+        particle_velocity[i] = (W * particle_velocity[i] + 
+                                C1 * r1 * (p_best_position[i] - particle_position[i]) + 
+                                C2 * r2 * (g_best_position - particle_position[i]))
+        
+        # Update Position
+        particle_position[i] += particle_velocity[i]
+        
+        # Evaluate current fitness
+        current_fitness = evaluate_fitness(particle_position[i])
+        
+        # Update Personal Best
+        if current_fitness < p_best_fitness[i]:
+            p_best_fitness[i] = current_fitness
+            p_best_position[i] = np.copy(particle_position[i])
+            
+            # Update Global Best
+            if current_fitness < g_best_fitness:
+                g_best_fitness = current_fitness
+                g_best_position = np.copy(particle_position[i])
+                
+    history.append(g_best_fitness)
+
+# ----------------------------------------------------
+# 4. Results & Visualization
+# ----------------------------------------------------
+best_routes = decode_position_to_routes(g_best_position)
+
+print(f"Optimal Total Distance found: {g_best_fitness:.2f}")
+print(f"Total Vehicles/Routes required: {len(best_routes)}")
+for idx, route in enumerate(best_routes):
+    route_demands = [customer_demands[c-1] for c in route]
+    print(f"  Route {idx + 1}: Depot -> {' -> '.join(map(str, route))} -> Depot (Load: {sum(route_demands)}/{VEHICLE_CAPACITY})")
+
+# Plotting the routes
+plt.figure(figsize=(10, 6))
+# Plot Depot
+plt.scatter(DEPOT_COORD[0], DEPOT_COORD[1], color='red', marker='s', s=150, label='Depot')
+
+# Plot Customers
+plt.scatter(customer_coords[:, 0], customer_coords[:, 1], color='blue', marker='o', s=80, label='Customers')
+for i, (x, y) in enumerate(customer_coords):
+    plt.text(x + 1, y + 1, f"C{i+1}\n(d:{customer_demands[i]})", fontsize=8, color='black')
+
+# Plot Vehicle Paths
+colors = plt.cm.get_cmap('tab10', len(best_routes))
+for idx, route in enumerate(best_routes):
+    path = [0] + route + [0]
+    path_coords = all_coords[path]
+    plt.plot(path_coords[:, 0], path_coords[:, 1], color=colors(idx), linewidth=2, label=f'Route {idx+1}')
+
+plt.title('Vehicle Route Optimization using PSO')
+plt.xlabel('X Coordinate')
+plt.ylabel('Y Coordinate')
+plt.grid(True)
+plt.legend()
+plt.show()
